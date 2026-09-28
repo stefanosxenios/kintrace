@@ -16,6 +16,10 @@ ODE kinetic model:
 
 Both networks are trained entirely on simulated fermentations.
 
+<p align="center">
+  <img src="docs/methodology_overview.png" alt="kintrace methodology overview" width="850">
+</p>
+
 ## Install
 
 ```bash
