@@ -106,3 +106,4 @@ dataloader/           in-silico loading and real-data preprocessing
 benchmark_simple/     Case Study 1 pipeline, fitting and figures
 xylitol_case_study/   Case Study 2 pipeline and real-data evaluation
 ```
+# kintrace
