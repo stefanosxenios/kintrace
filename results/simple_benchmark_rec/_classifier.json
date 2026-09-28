@@ -1,0 +1,36 @@
+{
+  "test_acc": 0.9472413793103448,
+  "confusion": [
+    [
+      732,
+      17,
+      0,
+      1
+    ],
+    [
+      79,
+      651,
+      0,
+      20
+    ],
+    [
+      6,
+      0,
+      642,
+      2
+    ],
+    [
+      5,
+      21,
+      2,
+      722
+    ]
+  ],
+  "class_names": [
+    "monod",
+    "contois",
+    "substrate_inhibition",
+    "biomass_inhibition"
+  ],
+  "mean_confidence": 0.9572778344154358
+}

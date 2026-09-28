@@ -1,0 +1,32 @@
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.DS_Store
+.venv/
+venv/
+
+# Generated datasets are large (GBs) and fully reproducible from datagen/.
+data/
+
+# Keep the shipped weights; ignore everything else written under results/.
+results/*
+!results/simple_benchmark/
+results/simple_benchmark/*
+!results/simple_benchmark/.gitkeep
+!results/simple_benchmark_rec/
+results/simple_benchmark_rec/*
+!results/simple_benchmark_rec/classifier.pt
+!results/simple_benchmark_rec/regressor_permech_m*.pt
+!results/simple_benchmark_rec/_classifier.json
+!results/simple_benchmark_rec/_regressor.json
+!results/xylitol_use_case/
+results/xylitol_use_case/*
+!results/xylitol_use_case/main/
+results/xylitol_use_case/main/*
+!results/xylitol_use_case/main/classifier.pt
+!results/xylitol_use_case/main/classifier_scaler.pkl
+!results/xylitol_use_case/main/regressor_x_scaler.pkl
+!results/xylitol_use_case/main/regressor_meta.json
+!results/xylitol_use_case/main/regressor_permech_model*.pt
+!results/xylitol_use_case/main/_classifier.json
+!results/xylitol_use_case/main/_regressor_permechanism.json
