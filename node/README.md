@@ -1,7 +1,14 @@
 # Neural ODEs for kinetic-mechanism identification
 
-This folder applies a **Neural ODE** approach to the two case studies of the kintrace paper. It is a
-starting point, contained in one notebook: [`notebooks/node_case_studies.ipynb`](notebooks/node_case_studies.ipynb).
+This folder applies a **Neural ODE** approach to the case studies of the kintrace paper. It is a starting
+point, in two notebooks:
+
+* [`notebooks/node_case_studies.ipynb`](notebooks/node_case_studies.ipynb) (**part 1**, §1–7): both case
+  studies of the paper, with the paper's mechanism libraries.
+* [`notebooks/node_case1_library_sr.ipynb`](notebooks/node_case1_library_sr.ipynb) (**part 2**, §8): Case 1
+  with a larger, 11-mechanism library, a run from a law that is *not* in the library, and **symbolic
+  regression** that proposes new rate laws from what the Neural ODE learned, for Case 1 and for the two
+  Case 2 rates.
 
 The paper answers two questions for a fed-batch run: *which kinetic mechanism* governs it, and *what
 are its parameters*. It does this with LSTMs trained offline on a large in-silico library. Here, each run
@@ -355,14 +362,240 @@ candidates from two starts takes 45–65 s per run.
   on 24–55 % of runs with the default step, and on 100 % with a step of $10^{-3}$. The paper's
   "LSTM start 86 % vs naive 39 %" result (Sec. 4.5) should be re-run with the larger step.
 
-## 8. Running it
+## 8. Part 2 — a larger Case 1 library and symbolic regression
+
+Part 2 asks three questions. How does selection behave when the library grows? What happens when the
+true law is not in the library at all? And can symbolic regression recover the two Case 2 rates?
+
+### 8.1 The 11-mechanism library
+
+The mass balance gains an optional death term:
+
+$$\dot X = (\mu - k_d - D)\,X, \qquad \dot S = -\frac{\mu X}{Y_{XS}} + D\,(S_{in} - S), \qquad \dot V = F.$$
+
+| rate law | $\mu(X,S)$ | in the library |
+|---|---|---|
+| Monod | $\mu_{max}\,\frac{S}{K_S+S}$ | with and without $k_d$ |
+| Contois | $\mu_{max}\,\frac{S}{K_cX+S}$ | with and without $k_d$ |
+| Haldane | $\mu_{max}\,\frac{S}{K_S+S+S^2/K_I}$ | with and without $k_d$ |
+| biomass inhibition | $\mu_{max}\,\frac{S}{K_S+S}\left(1-\frac{X}{X_{max}}\right)$ | with and without $k_d$ |
+| Tessier | $\mu_{max}\left(1-e^{-S/K_S}\right)$ | without $k_d$ |
+| Moser | $\mu_{max}\,\frac{S^n}{K_S+S^n}$ | without $k_d$ |
+| Aiba | $\mu_{max}\,\frac{S}{K_S+S}\,e^{-S/K_I}$ | without $k_d$ |
+
+The parameter ranges are kintrace's, extended with $k_d \in [0.005, 0.1]$ h⁻¹, $n \in [1, 3]$, Moser
+$K_S \in [0.1, 25]$ and Aiba $K_I \in [5, 50]$ g/L.
+
+**Data.** Every run uses the part-1 design (a 6 h batch phase, then three rising feed rates; 49 samples;
+3 % noise). The true parameters lie inside the ranges: $\mu_{max} = 0.5$ (0.6 for Haldane and Aiba),
+$Y_{XS} = 0.5$ and $k_d = 0.04$ h⁻¹ for the death variants. There are 11 runs, one per mechanism, plus
+the hidden run of §8.3.
+
+**Changes to the Neural ODE.** The Neural ODE also learns $k_d \ge 0$, and three training details changed:
+
+* **Robust initial state.** It starts from the median of the first three samples, because with noise clipped
+  at zero the first biomass sample can read 0 g/L, and a culture started at zero never grows.
+* **Range-weighted loss.** The loss weights each channel by its **range** ($\max - \min$) instead of its
+  maximum, matching the noise model (3 % of range). For a run whose substrate never falls near zero, the
+  maximum is about twice the range, and the old weighting under-fitted the substrate.
+* **Learning rate.** It is $10^{-2}$ instead of $5\times10^{-3}$.
+
+### 8.2 Symbolic regression on the learned rates
+
+The library can only choose among laws someone wrote down. Symbolic regression instead *proposes* a law
+from the learned rate $\hat\mu(t)$ and states $\hat X(t), \hat S(t)$.
+
+**A linear trick for rational laws.** Multiplying a rate law by its denominator makes it linear in its
+coefficients. For example, Haldane becomes
+
+$$\mu S \;=\; \mu_{max}\,S \;-\; K_S\,\mu \;-\; \tfrac{1}{K_I}\,\mu S^2 .$$
+
+So we regress $\mu S$ on a small dictionary of terms,
+
+$$\mu S = \sum_k c_k\,\theta_k(X, S, \mu), \qquad
+\theta \in \{\,S,\ SX,\ S^2,\ \mu,\ \mu X,\ \mu S^2,\ \mu SX\,\},$$
+
+and read the rate law back as a ratio. The terms without μ form the numerator $N$, and those with μ form
+the denominator $D$:
+
+$$\mu = \frac{N}{D}, \qquad N = \sum_{\text{plain}} c_k\,\theta_k, \qquad
+D = S - \sum_{\mu\text{-terms}} c_k\,\theta_k/\mu.$$
+
+This dictionary expresses Monod ($S$, $\mu$), Contois ($S$, $\mu X$), Haldane ($S$, $\mu$, $\mu S^2$) and
+biomass inhibition ($S$, $SX$, $\mu$) exactly, and the hidden law with $S$, $SX$, $\mu$, $\mu S^2$. Tessier,
+Moser and Aiba (exponentials, powers) can only be approximated.
+
+**Sparsity by best-subset search.** With 7 terms there are only 127 subsets, so every subset of up to 4
+terms is tried. SINDy's thresholded least squares, tried first, approximates this search for large
+dictionaries, but here it returned meaningless models for the Haldane and hidden runs.
+
+**Fitting each law.** Every subset defines a law $\mu = N/D$ whose coefficients are fitted to $\hat\mu$
+directly by least squares, like the library laws in §3:
+
+$$\min_{a,\,b}\ \sum_t \left(\frac{\sum_{\text{plain}} a_k\,\theta_k}{S + \sum_{\mu\text{-terms}} b_k\,\theta_k/\mu} - \hat\mu\right)^2,
+\qquad b_k \ge 0 .$$
+
+The linear form is only used to *write* the laws. Fitting it directly by linear least squares weights each
+point by $D^2$, so the late part of a run, where $D$ is large, dominates; on the Case 2 conversion rate
+that chose physically impossible laws.
+
+**Validity rules.** A candidate law is kept only if it is physically sensible:
+
+* **It has a numerator.** A model made only of μ-terms (for example $\mu S = a\mu + b\mu S^2$) reduces to
+  a relation among $S$ values alone and "fits" without describing any rate.
+* **Its denominator terms are positive** ($b_k \ge 0$), like $K_S$, $S^2/K_I$ or $K_c X$. Unconstrained
+  fits produce denominators such as $S - 1.2 - 0.06\,P$, that is product *activation* and a rate that
+  blows up.
+* **The rate vanishes smoothly when the substrate runs out.** $D > 0$ at $S = 0$, the same prior as the
+  Neural ODE's factor $S/(S+K)$ (§2). Otherwise laws such as $\mu = a + bX$, where $S$ cancels, switch on
+  abruptly at any $S > 0$.
+* **The rate is non-negative** along the run.
+
+For each size, the **three** best valid laws are kept (up to 9 per run). Several laws fit $\hat\mu$ almost
+equally well, and the ranking at the rate level is too uncertain to trust a single one.
+
+**The data decide, not the regression.** The regression sees only one trajectory, so several term sets fit
+$\hat\mu$ about equally well (the confounding of §7). Each candidate, with and without $k_d$, therefore
+becomes an ODE model. Its parameters are the coefficients $c_k$ (sign-preserving bounds
+$[0.1\,c_k,\ 10\,c_k]$), $Y_{XS}$ and optionally $k_d$. It is refined against the data (§4) and ranked by
+BIC (§5) together with the 11 library mechanisms.
+
+Some candidates are *the same law* as a library mechanism written as terms: $\{S,\ \mu X\}$ is exactly
+Contois and $\{S,\ \mu\}$ is exactly Monod. Such a candidate ties with its library twin (ΔBIC ≈ 0) and the
+two share the BIC weight.
+
+### 8.3 The hidden run
+
+One run is generated from a law that combines two library ingredients but is not itself in the library:
+
+$$\mu = \mu_{max}\,\frac{S}{K_S + S + S^2/K_I}\left(1 - \frac{X}{X_{max}}\right),
+\qquad \mu_{max} = 0.6,\ K_S = 1,\ K_I = 20,\ X_{max} = 30.$$
+
+The setting was chosen so that both ingredients show in the data: Haldane-type acceleration while the batch
+substrate is used up, then a biomass plateau with substrate building up. With $X_{max} = 15$, the first
+setting tried, the substrate never ran low, plain biomass inhibition fitted as well as the true law, and
+there was nothing to discover.
+
+### 8.4 Results
+
+**Library selection** (BIC weights; shortlist = $w > 0.1$):
+
+| run | selected (weight) | shortlist |
+|---|---|---|
+| Monod | Contois (0.40) | Contois, Tessier 0.28, Moser 0.12 (Monod 0.09) |
+| Monod+$k_d$ | Contois+$k_d$ (0.47) | Contois+$k_d$, **Monod+$k_d$ 0.46** |
+| Contois | **Contois** (0.81) | Contois |
+| Contois+$k_d$ | **Contois+$k_d$** (0.80) | Contois+$k_d$, biomass inh.+$k_d$ 0.20 |
+| Haldane | Contois (0.87) | Contois |
+| Haldane+$k_d$ | Aiba (0.82) | Aiba, **Haldane+$k_d$ 0.18** |
+| biomass inh. | **biomass inh.** (0.90) | biomass inh., biomass inh.+$k_d$ 0.10 |
+| biomass inh.+$k_d$ | **biomass inh.+$k_d$** (1.00) | biomass inh.+$k_d$ |
+| Tessier | **Tessier** (0.35) | Tessier, Monod 0.35, Contois 0.10 |
+| Moser | **Moser** (0.70) | Moser, Contois 0.26 |
+| Aiba | **Aiba** (0.48) | Aiba, Haldane 0.44 |
+| hidden | biomass inh. (0.91) | biomass inh. |
+
+* **The true mechanism is ranked first in 7 of 11 runs and shortlisted in 9 of 11.** With 4 mechanisms
+  (part 1) all four were ranked first. A larger library means more near-ties and lower weights.
+* **The misses are genuine ambiguities.**
+  * Monod, Contois, Tessier and Moser differ mainly at low $S$, which the fed phase visits below the noise.
+  * On the Haldane run, $X$ and $S$ rise together, so a falling μ can be blamed on either, and Contois
+    fits as well.
+  * Haldane+$k_d$ and Aiba are two forms of substrate inhibition.
+* **Death is detected.** Every death run has its +$k_d$ mechanism selected or shortlisted, and no
+  death-free run selects one. The learned $k_d$ is 0.031–0.032 h⁻¹ for three of the four death runs (true
+  0.04; 0.012 for Haldane+$k_d$), and 0.006–0.016 for the death-free runs.
+
+**Symbolic regression** (ΔBIC = best symbolic-regression law − best library mechanism; negative means the
+new law wins):
+
+| run | ΔBIC | best law found by symbolic regression |
+|---|---|---|
+| Monod, Monod+$k_d$, Contois, Contois+$k_d$, Haldane | −0.0 to 0.0 | Contois $\{S, \mu X\}$, e.g. $0.47\,S/(S + 0.91\,X)$ on the Contois run (true $K_c = 1$): the library law rediscovered |
+| biomass inh.+$k_d$ | 0.0 | biomass inhibition $\{S, SX, \mu\}$, rediscovered |
+| Tessier | 0.0 | Monod $\{S, \mu\}$, the same tie as in the library |
+| Aiba | +0.1 | a new rational law that ties; the data barely constrain the shape |
+| biomass inh., Moser, Haldane+$k_d$ | +4.5, +2.0, +39 | – |
+| **hidden** | **−28.1** | $0.666\,\frac{S\,(1 - X/30.5)}{1.96 + S + S^2/16.3}$ (weight 0.59) |
+
+* **No false discoveries.** On all 11 library runs, the best symbolic-regression law ties with or loses to
+  the best library mechanism. Most ties are the library law itself, rediscovered in term form.
+* **The missing law is found.** On the hidden run the new law wins by ΔBIC ≈ 28 ($\chi^2$ = 73 vs 106).
+  Its terms $\{S, SX, \mu, \mu S^2\}$ are exactly those of the true law $0.6\,S(1 - X/30)/(1 + S + S^2/20)$,
+  and its constants are close: $X_{max} \approx 30.5$ (true 30), $K_I \approx 16$ (20) and
+  $K_S \approx 2.0$ (1.0, the least identifiable one, as in part 1).
+* **A goodness-of-fit test alone would not have flagged the hidden run.** The best library mechanism reaches
+  $\chi^2 = 106$ for $n = 98$, which is within the noise band ($\chi^2 \approx n \pm 3\sqrt{2n}$). The
+  symbolic-regression proposal is what exposes the missing law.
+* **Symbolic regression also gives readable laws on library runs**, such as a logistic law with
+  $X_{max} \approx 19.7$ (true 20) on the biomass-inhibition run.
+
+### 8.5 Case 2: symbolic regression on μ1 and μ2
+
+The two virtual fermentations of §6.2 (BC18-like from M31, BC15-like from M28) are refitted with the
+part-1 Neural ODE, and the 11 library mechanisms are refined as before. Each rate gets its own dictionary:
+
+$$\mu_1 S_1 = \sum_k c_k\,\theta_k,\qquad \theta \in \{S_1,\ \mu_1,\ \mu_1 S_2^2,\ \mu_1 P,\ \mu_1 S_1 P\},$$
+
+$$\mu_2 S_2 = \sum_k c_k\,\theta_k,\qquad \theta \in \{S_2,\ \mu_2,\ \mu_2 S_2^2,\ \mu_2 P,\ \mu_2 S_2 P,\ \mu_2 S_2^2 P\}.$$
+
+Together they cover every term of M21–M31: Monod growth, cross-inhibition by xylose and product inhibition
+of growth for μ1; Haldane and product inhibition of conversion for μ2. For example, M28's conversion law
+becomes
+
+$$\mu_2 S_2 = \mu_{max,2}\,S_2 - K_P\,\mu_2 - \tfrac{K_P}{K_{PI_2}}\,\mu_2 P - \tfrac{1}{K_{PI_2}}\,\mu_2 S_2 P .$$
+
+The best valid law of each size for μ1 (up to 3 terms) and μ2 (up to 5 terms) are combined into full ODE
+models (Eq. 8), with and without $k_d$: 12 models for BC18-like and 16 for BC15-like. They are refined
+against the data and ranked by BIC with the library.
+
+| run | best library | best found by symbolic regression | ΔBIC (SR − library) |
+|---|---|---|---|
+| BC18-like (true M31) | M31, $\chi^2$ = 27.9 (weight 0.13) | Monod μ1, death, $\mu_2 = \frac{0.057\,S_2}{1 + 0.0009\,S_2 + 0.0045\,P S_2}$, $\chi^2$ = 29.6 (weight 0.41) | −2.2 |
+| BC15-like (true M28) | M28, $\chi^2$ = 21.1 (weight 0.51) | Monod μ1, $\mu_2 = \frac{0.0237\,S_2}{1 + 0.058\,S_2 + 0.0018\,P S_2}$, $\chi^2$ = 22.6 (weight 0.24) | +1.5 |
+
+* **The key ingredients are recovered in both runs.** μ1 is found to be Monod, as in every library model.
+  Death is included where the run has it (BC18-like) and left out where it doesn't (BC15-like). Product
+  inhibition of conversion appears as a $P\,S_2$ term in the denominator of μ2. In BC15-like that term's
+  coefficient is 0.0018, against 0.0017 in the true law
+  $\mu_2 = 0.067\,S_2/(1 + 0.017\,S_2 + 0.1\,P + 0.0017\,P S_2)$.
+* **The found laws tie with the true mechanism.** On BC18-like, the found law has one parameter fewer than
+  M31 and ranks first by ΔBIC = −2.2; on BC15-like, M28 stays first by 1.5. Differences this small are not
+  evidence either way. With 13 samples per species, compact forms such as these and the textbook laws
+  describe the data equally well, and the found rates follow the true μ1 and μ2 closely (notebook figure).
+
+### 8.6 What was learned in part 2
+
+* **Symbolic regression inherits the confounding.** It reads the learned rates along one trajectory, so on
+  the Haldane run it proposes a Contois-type law, just as the library does. Only runs in which $X$ and $S$
+  vary independently can fix this.
+* **The dictionary limits what can be found.** Only rational laws built from the 7 terms can be expressed.
+* **The Neural ODE's $\chi^2$ is only a rough reference.** A few hundred Adam steps leave it above a
+  refined mechanism in several runs (for example 165 vs 106 on the hidden run), so it cannot serve as a
+  strict lack-of-fit benchmark.
+* **Symbolic regression needs physical rules to be useful.** Fitting the laws in rate space, positive
+  denominator terms, and a rate that vanishes when the substrate runs out (§8.2) were all needed; without
+  them, the best-fitting candidates were meaningless or physically impossible.
+* **Each run has one noise realisation.** Unlike part 1 (§6.3), these results were not repeated over
+  several noise draws.
+* **Implementation note.** The ODE solver (LSODA) prints its warnings from Fortran, which bypasses Python,
+  so the notebook silences them by redirecting the process's stdout while the solver runs.
+
+## 9. Running it
 
 ```bash
-pip install torchdiffeq                 # on top of kintrace's requirements.txt
+pip install torchdiffeq sympy           # on top of kintrace's requirements.txt
 cd kintrace/node/notebooks
-jupyter notebook node_case_studies.ipynb   # about 5 min on a CPU
+jupyter notebook node_case_studies.ipynb       # part 1, about 5 min on a CPU
+jupyter notebook node_case1_library_sr.ipynb   # part 2, about 15 min on a CPU
 ```
 
-**Next steps:** fit several runs jointly with shared kinetics; plug in the real BC runs through
-`xylitol_case_study/realdata.py::load_experiments`; warm-start from the LSTM estimates; run symbolic
-regression on the learned rates to propose laws outside the library.
+**Next steps:**
+1. Fit several runs jointly with shared kinetics and different feeds or initial substrate, so that $X$
+   and $S$ vary independently. This breaks the confounding that limits both library selection and symbolic
+   regression.
+2. Plug in the real BC runs through `xylitol_case_study/realdata.py::load_experiments`.
+3. Warm-start from the LSTM estimates.
+4. Reach non-rational laws: add exponential terms to the dictionary, or use genetic-programming symbolic
+   regression (for example PySR).
+5. Add accepted symbolic-regression laws to the library for later runs.
