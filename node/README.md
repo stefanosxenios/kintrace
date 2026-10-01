@@ -1,7 +1,7 @@
 # Neural ODEs for kinetic-mechanism identification
 
 This folder applies a **Neural ODE** approach to the case studies of the kintrace paper. It is a starting
-point, in two notebooks:
+point, in three notebooks:
 
 * [`notebooks/node_case_studies.ipynb`](notebooks/node_case_studies.ipynb) (**part 1**, §1–7): both case
   studies of the paper, with the paper's mechanism libraries.
@@ -9,6 +9,10 @@ point, in two notebooks:
   with a larger, 11-mechanism library, a run from a law that is *not* in the library, and **symbolic
   regression** that proposes new rate laws from what the Neural ODE learned, for Case 1 and for the two
   Case 2 rates.
+* [`notebooks/node_case1_joint_sr_loop.ipynb`](notebooks/node_case1_joint_sr_loop.ipynb) (**part 3**, §9):
+  Case 1 with **three runs per experiment fitted jointly**, an **exponential term** that lets symbolic
+  regression reach non-rational laws, an **escalation** that screens every law against the data when the
+  library fails, and **closing the loop**: accepted laws join the library for later runs.
 
 The paper answers two questions for a fed-batch run: *which kinetic mechanism* governs it, and *what
 are its parameters*. It does this with LSTMs trained offline on a large in-silico library. Here, each run
@@ -581,21 +585,156 @@ against the data and ranked by BIC with the library.
 * **Implementation note.** The ODE solver (LSODA) prints its warnings from Fortran, which bypasses Python,
   so the notebook silences them by redirecting the process's stdout while the solver runs.
 
-## 9. Running it
+## 9. Part 3 — joint runs, non-rational laws and a growing library
+
+Part 3 implements the three next steps of part 2, for Case 1, with the 11-mechanism library of §8 and the
+same hidden law.
+
+### 9.1 Joint fitting of three runs
+
+Along one fed-batch run, $X$ and $S$ change together, so a falling μ can be blamed on either (§7). Every
+experiment now has three 24 h runs, each with 49 samples and 3 % noise, and all three are fitted **jointly**:
+one set of kinetic parameters, one initial state per run.
+
+| run | $X_0$ | $S_0$ | feed (L/h, four 6 h segments) | role |
+|---|---|---|---|---|
+| a | 1 g/L | 30 g/L | 0, 0.02, 0.05, 0.08 | the part 1–2 run (same data) |
+| b | 4 g/L | 5 g/L | 0.03, 0.03, 0.06, 0.06 | high biomass at low substrate |
+| c | 0.5 g/L | 60 g/L | 0, 0, 0.03, 0.06 | low biomass at high substrate |
+
+**Joint Neural ODE.** One network $\mu(X, S)$, one $Y_{XS}$ and one $k_d$ are shared, with one initial state
+per run. The three runs are integrated as one batched state of shape (runs, 3). Run b, whose substrate falls
+from 5 to below 1 g/L in the first hour, forced three changes from part 2:
+
+* **The substrate factor's constant is set by a typical run.** It is
+  $K = 0.1 \times \operatorname{median}_r \max_t S_r(t) \approx 3$ g/L. Taking the largest value over all runs
+  ($\approx 70$ g/L in run c) gives $K \approx 7$ g/L, far above run b's whole substrate range.
+* **The RK4 step is 0.25 h**, because the smaller $K$ makes the substrate balance stiffer (§2).
+* **The initial state is the intercept of a straight line through the first three samples.** Their median,
+  used in part 2, is a poor start when the substrate is falling fast.
+
+**Refinement.** The joint χ² is summed over all runs:
+
+$$\chi^2_m = \sum_{r=1}^{3}\ \sum_{i,j}\left(\frac{x_{rj}(t_i;\theta, x_{0,r}) - y_{rij}}{\sigma_{rj}}\right)^2,
+\qquad n = 3 \times 2 \times 49 = 294 .$$
+
+The initial states $x_{0,r}$ may now move up to 3 noise standard deviations from their estimate. The ±50 %
+band around the Neural ODE's estimate used before excluded the true value when the Neural ODE was off. On
+the Aiba experiment that pinned the fit at χ² 634, against 232 at the true parameters.
+
+**Adequacy.** If a model is right, χ² is about $n - p$ with spread $\sqrt{2n}$. A best χ² above
+$n + 3\sqrt{2n} \approx 367$ means no candidate explains the experiment.
+
+**Results.**
+
+| experiment | run a alone: selected | three runs: selected | best χ² (n = 294) |
+|---|---|---|---|
+| Monod | Contois (0.40) | **Monod (0.86)** | 244 |
+| Monod+$k_d$ | Contois+$k_d$ (0.47) | **Monod+$k_d$ (0.97)** | 265 |
+| Contois | Contois (0.81) | **Contois (0.94)** | 279 |
+| Contois+$k_d$ | Contois+$k_d$ (0.80) | **Contois+$k_d$ (1.00)** | 310 |
+| Haldane | Contois (0.87) | **Haldane (0.92)** | 268 |
+| Haldane+$k_d$ | Aiba (0.82) | **Haldane+$k_d$ (1.00)** | 244 |
+| biomass inh. | biomass inh. (0.90) | **biomass inh. (0.95)** | 226 |
+| biomass inh.+$k_d$ | biomass inh.+$k_d$ (1.00) | **biomass inh.+$k_d$ (1.00)** | 256 |
+| Tessier | Tessier (0.35) | **Tessier (0.54)**, Aiba 0.26, Monod 0.15 | 302 |
+| Moser | Moser (0.71) | **Moser (1.00)** | 242 |
+| Aiba | Aiba (0.51) | **Aiba (1.00)** | 223 |
+| hidden | biomass inh. (0.91) | Haldane (0.99) | **2971: not within noise** |
+
+* **The true mechanism is selected in all 11 library experiments with three runs, against 7 of 11 with
+  one.** The single-run misses were exactly the confounded pairs of §8.4.
+* **The hidden law is now flagged.** Every library fit is within the noise except the hidden experiment's.
+  On one run it was not (χ² 106 for 98 points, §8.4).
+* **The joint Neural ODE is the weak link.** It reaches the noise floor (loss ≈ 1e-3) on five experiments,
+  stays at 2–6e-3 on six, and at 2.2e-2 on Haldane+$k_d$. Selection still works, because it is decided by
+  refinement against the data.
+
+### 9.2 An exponential term for non-rational laws
+
+The dictionary of §8.2 gains one term with a fitted constant $K$:
+
+$$\theta = S\,e^{-S/K}.$$
+
+That makes Tessier ($\mu S = \mu_{max} S - \mu_{max} S e^{-S/K}$) and Aiba
+($\mu S = \mu_{max} S e^{-S/K} - K_S\,\mu$) exactly expressible; Moser ($S^n$) remains out of reach.
+$K$ is fitted together with the coefficients (5 starting values, $\ln K$ bounded). The rule "the rate
+vanishes when the substrate runs out" is now checked directly, as $\mu(X, S \to 0) \le 5\,\%$ of the largest
+learned rate: Tessier's denominator is just $S$, which part 2's check (a positive denominator at $S = 0$)
+would reject. Two laws per size are kept.
+
+* **Aiba is recovered exactly:** $0.577\,S e^{-S/30.5}/(1 + 0.972\,S)$, that is $\mu_{max} = 0.59$,
+  $K_S = 1.03$, $K_I = 30.5$ (true 0.6, 1, 30).
+* **No false discoveries.** On every library experiment the best found law ties with (Contois and Aiba
+  rediscovered) or loses to the best library mechanism, by up to ΔBIC +105 (Moser).
+* **Tessier is not singled out:** the best law found is Monod-like (ΔBIC +2.7). Tessier, Monod and Aiba
+  differ only at low substrate.
+
+### 9.3 Escalation: screening every law against the data
+
+Symbolic regression shortlists laws by how well they match the **learned** rate $\hat\mu$:
+$e = \lVert \mu_{law} - \hat\mu\rVert / \lVert\hat\mu\rVert$. Only the shortlist is refined against the data.
+That fails when $\hat\mu$ is inaccurate. On the hidden experiment, $\hat\mu$ is 20–30 % off in runs a and b
+(3 % in run c), and these errors are systematic. Matched to them, the true term set $\{S, SX, \mu, \mu S^2\}$
+ranks only 16th, so it is never tested. The best shortlisted law reaches χ² 440, outside the noise band,
+while the true law gives 268 at the true parameters.
+
+So when the best library mechanism fails the adequacy test, **every valid law** (67 here) gets a short
+refinement against the data (at most 50 evaluations) and is ranked by BIC; the best 5 are then fully refined,
+with and without $k_d$. The short refinement must adjust the initial states too. Held at their estimates
+from the first noisy samples (run c's biomass at 0.19 instead of 0.5 g/L), even the true law reaches only
+χ² ≈ 4400, because no coefficient can compensate a wrong start during exponential growth.
+
+On the hidden experiment, escalation takes 4 min and finds the true term set with χ² 258, inside the noise
+band:
+
+$$\mu = 0.614\,\frac{S\,(1 - X/30.0)}{1.07 + S + S^2/19.0}
+\qquad\text{against the true}\qquad 0.6\,\frac{S\,(1 - X/30)}{1 + S + S^2/20}.$$
+
+### 9.4 Closing the loop
+
+A found law is **accepted** into the library when it beats every library mechanism by ΔBIC < −10 *and*
+fits within the noise (χ² ≤ 367). Its refined coefficients become the centre of its new parameter box. For
+a later experiment it is started from its stored values and from its terms refitted to the new learned rates.
+
+* **The exact hidden law is accepted** as SR-1 (ΔBIC −2707, χ² 258). The approximate law found before
+  escalation (χ² 440) would have failed the noise check.
+* **A later run of the same organism** (one run: $X_0 = 2$, $S_0 = 20$ g/L, $S_{in} = 150$ g/L, a new feed) is
+  identified with the library alone. The original library picks biomass inhibition (weight 0.91); the
+  enlarged library picks **SR-1 (0.95)**, χ² 60 vs 71 for 98 points. The fits look alike because the new run
+  never reaches high substrate, where the inhibition term matters.
+* **SR-1 steals nothing.** Refined on all 11 library experiments, it never takes more than 0.03 of the
+  weight, and every selection is unchanged.
+
+### 9.5 What was learned in part 3
+
+* **Experiment design beats algorithmic tricks.** Three runs that decorrelate $X$ and $S$ fixed every
+  library confusion of part 2.
+* **Initial states matter as much as kinetics.** Twice a fit failed because an initial state was held fixed or
+  bounded too tightly. Refine them, with bounds set by the noise.
+* **Ranking candidates by the learned rates is a shortcut, not a guarantee.** It is cheap and works when the
+  Neural ODE is accurate. When the library fails, test candidates against the data.
+* **"Better than the library" is not "right".** Accepting a law requires it to fit within the noise.
+* **Limitations.** One noise realisation per run and a single hidden law. Escalation fires only when *no*
+  library mechanism fits within the noise, so a missing law that a library mechanism approximates well would
+  pass unnoticed.
+
+## 10. Running it
 
 ```bash
 pip install torchdiffeq sympy           # on top of kintrace's requirements.txt
 cd kintrace/node/notebooks
-jupyter notebook node_case_studies.ipynb       # part 1, about 5 min on a CPU
-jupyter notebook node_case1_library_sr.ipynb   # part 2, about 15 min on a CPU
+jupyter notebook node_case_studies.ipynb         # part 1, about 5 min on a CPU
+jupyter notebook node_case1_library_sr.ipynb     # part 2, about 15 min on a CPU
+jupyter notebook node_case1_joint_sr_loop.ipynb  # part 3, about 35 min on a CPU
 ```
 
 **Next steps:**
-1. Fit several runs jointly with shared kinetics and different feeds or initial substrate, so that $X$
-   and $S$ vary independently. This breaks the confounding that limits both library selection and symbolic
-   regression.
-2. Plug in the real BC runs through `xylitol_case_study/realdata.py::load_experiments`.
-3. Warm-start from the LSTM estimates.
-4. Reach non-rational laws: add exponential terms to the dictionary, or use genetic-programming symbolic
-   regression (for example PySR).
-5. Add accepted symbolic-regression laws to the library for later runs.
+1. Plug in the real BC runs through `xylitol_case_study/realdata.py::load_experiments`, and apply joint fitting
+   to Case 2 (the BC runs differ in feed and initial xylose).
+2. Make the joint Neural ODE reach the noise floor everywhere (multiple shooting, a stiff solver, or several
+   seeds), so the cheap symbolic-regression shortlist is reliable and escalation is rarely needed.
+3. Repeat part 3 over several noise realisations and several hidden laws.
+4. Reach laws beyond the dictionary, such as Moser's $S^n$: power terms with a fitted exponent, or
+   genetic-programming symbolic regression (for example PySR).
+5. Warm-start from the LSTM estimates.
