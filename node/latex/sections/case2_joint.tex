@@ -1,0 +1,17 @@
+\subsection{Real runs analysed jointly}\label{sec:c2:joint}
+In case study~1, fitting several runs jointly resolved the ambiguity of single runs. That required the runs to share their kinetics, which held by construction. For real runs it is a hypothesis, and it can be tested with the same criterion: the BIC of a joint fit with one set of kinetic parameters is compared with the BIC of separate fits of the same runs, both evaluated with one error standard deviation per species pooled over the runs (Table~\ref{tab:c2shared}). Because the separate fits were obtained with run-specific error weights, their pooled criterion is an upper bound on its optimum, and the comparison is conservative with respect to separate kinetics.
+
+\begin{table}[width=\linewidth,cols=5,pos=t]
+\caption{Case study 2: shared versus run-specific kinetics. BIC of M31 fitted jointly with shared parameters minus BIC of M31 fitted to each run separately, both with one error standard deviation per species pooled over the runs (positive: run-specific parameters are preferred); $k$ counts the kinetic parameters.}\label{tab:c2shared}
+\begin{tabular*}{\tblwidth}{@{}LCCCC@{}}
+\toprule
+Runs & $n$ & $k$ shared & $k$ separate & $\Delta\BIC$ \\
+\midrule
+\inputtab{generated/tab_c2_shared.tex}
+\bottomrule
+\end{tabular*}
+\end{table}
+
+Joint fitting again selected M31: with a weight of \JointThreeW{} for the three runs in yeast extract--peptone medium (BC12, BC15 and BC18) and of \JointFourW{} for all four runs, with M30 taking the rest (Table~\ref{tab:c2real}, Fig.~\ref{fig:c2weights}). The shared parameters, however, do not describe the runs equally well. In the joint fit of BC12, BC15 and BC18, the residual standard deviations of xylose and xylitol in BC15 rise from about 1\,g\,L$^{-1}$ in its individual fit to 9 and 12\,g\,L$^{-1}$ (Fig.~\ref{fig:c2real}, dashed lines), and the fitted initial biomass of the four-run fit lies 1.8--2.9\,g\,L$^{-1}$ above the first measurements, at the bounds of the initial states. Accordingly, run-specific parameters were preferred for every group of runs tested (Table~\ref{tab:c2shared}), with $\Delta\BIC=\SharedThree$ for the three runs in the same medium and $\Delta\BIC=\SharedTwo$ for BC15 and BC18, the two runs with the most similar operation. The real runs therefore share a mechanism but not its parameter values, and the differences are larger than their measurement errors.
+
+This has a direct consequence for the symbolic regression. For the joint analyses the best proposed laws were preferred to M31 beyond the acceptance threshold ($\Delta\BIC=\JointThreeSRdBIC$ and $\JointFourSRdBIC$; Table~\ref{tab:c2sr}). Both have the same structure, a Monod-type conversion rate with an additional numerator term that decays exponentially with xylitol and a combined inhibition term $PS_2^2$ in the denominator, and their additional terms may absorb part of the differences between the runs: in the three-run fit, for instance, the exponential term has fallen to 10\,\% at 3\,g\,L$^{-1}$ xylitol and only describes a transient at the start of the feed. A law that wins because the model with shared parameters is misspecified is exactly what the adequacy condition of the acceptance rule is meant to reject; without known measurement errors it cannot be applied, and these laws were not accepted.

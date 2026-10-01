@@ -1,0 +1,100 @@
+%% Manuscript for Computers & Chemical Engineering (Elsevier CAS double-column template)
+\documentclass[a4paper,fleqn]{cas-dc}
+
+\usepackage[authoryear]{natbib}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,backgrounds}
+
+% numbers quoted in the text are generated from the results by the report scripts
+\input{generated/numbers_c1.tex}
+\input{generated/numbers_c2.tex}
+
+\makeatletter
+\newcommand{\inputtab}[1]{\@@input #1 }   % primitive \input: works inside tabular
+\makeatother
+\setlength{\emergencystretch}{1.5em}
+\newcommand{\todo}[1]{\textcolor{red}{\textbf{[#1]}}}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\softplus}{\operatorname{softplus}}
+\newcommand{\BIC}{\mathrm{BIC}}
+
+\begin{document}
+\let\WriteBookmarks\relax
+\def\floatpagepagefraction{1}
+\def\textpagefraction{.001}
+
+\shorttitle{Hybrid neural ODEs and symbolic regression for kinetic mechanism identification}
+\shortauthors{K. Mexis et~al.}
+
+\title [mode = title]{Hybrid neural ODEs and physically constrained symbolic regression for kinetic mechanism identification and discovery in fed-batch bioprocesses}
+
+\author[1]{Konstantinos Mexis}
+\cormark[1]
+\ead{costasmexis@gmail.com}
+\credit{Conceptualization, Methodology, Software, Formal analysis, Investigation, Visualization, Writing -- original draft}
+
+\author[1]{Stefanos Xenios}
+\author[1]{Alexandros Doulaveris}
+\author[1]{Nikos Trokanas}
+\author[1]{Antonis Kokossis}
+
+\affiliation[1]{organization={School of Chemical Engineering, National Technical University of Athens},
+    addressline={Iroon Polytechneiou 9},
+    city={Zografou, Athens},
+    postcode={15772},
+    country={Greece}}
+
+\cortext[cor1]{Corresponding author}
+
+\begin{abstract}
+%% ABSTRACT-START
+Kinetic models of fed-batch bioprocesses are usually built by calibrating a library of candidate rate laws and comparing them with an information criterion. The procedure depends on good starting points, can only return mechanisms that the modeller has written down, and is often ambiguous when a single run is available. We present a workflow that learns the kinetics before naming them. A hybrid neural ordinary differential equation keeps the known mass balances and represents the specific rates by a neural network constrained to be non-negative and to vanish without substrate; it is trained directly on sparse offline measurements of one or several runs. The learned rates initialise every library mechanism for refinement against the measurements and feed a physically constrained symbolic regression that proposes rational and exponential rate laws. All candidates are ranked by the Bayesian information criterion; when no candidate fits within the measurement noise, every admissible law is screened against the data, and a proposed law enters the library only if it is decisively better and adequate. In a single-substrate case study with eleven mechanisms, selection accuracy rose from \ConeAccSingle\,\% for one run to \ConeAccJoint\,\% for three jointly fitted runs, the regression produced no false discoveries in 220 analyses, and a mechanism missing from the library was detected, and recovered exactly or in an equivalent form, in all ten noise realisations. In a dual-substrate xylitol bioconversion, the workflow identified the generating mechanism of virtual runs with realistic sampling and selected the same mechanism---substrate and product inhibition of the conversion with cell death---for each of four real fed-batch fermentations with unknown noise levels; joint fits showed that the runs share this mechanism but not its parameter values.
+%% ABSTRACT-END
+\end{abstract}
+
+\begin{highlights}
+\item Hybrid neural ODEs learn fed-batch kinetics before any mechanism is assumed
+\item Learned rates initialise candidate mechanisms ranked by information criteria
+\item Constrained symbolic regression proposes rate laws missing from the library
+\item Jointly fitted runs with decorrelated biomass and substrate resolve ambiguity
+\item Four real xylitol fermentations share one mechanism but not its parameter values
+\end{highlights}
+
+\begin{keywords}
+kinetic model identification \sep model discrimination \sep hybrid modelling \sep neural ordinary differential equations \sep symbolic regression \sep fed-batch fermentation \sep xylitol
+\end{keywords}
+
+\maketitle
+
+\input{sections/introduction}
+\input{sections/background}
+\input{sections/methods}
+\input{sections/case1}
+\input{sections/case2}
+\input{sections/discussion}
+\input{sections/conclusions}
+
+\section*{Code and data availability}
+The code that implements the workflow and reproduces every number, table and figure of this article is available at \todo{repository URL}. The fed-batch measurements analysed in Section~\ref{sec:c2:real} were reported by \citet{Toivari2025} and are openly available as the file \texttt{FedBatch\_xylitol\_in\_YP.xlsx} of the dataset of \citet{ToivariData2025} (CC BY 4.0).
+
+\printcredits
+\todo{Add the contribution roles of S.~Xenios, A.~Doulaveris, N.~Trokanas and A.~Kokossis.}
+
+\section*{Declaration of competing interest}
+The authors declare that they have no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.
+
+\section*{Acknowledgements}
+\todo{Funding and grant acknowledgements.}
+
+\section*{Declaration of generative AI and AI-assisted technologies in the manuscript preparation process}
+During the preparation of this work the authors used AI-assisted tools to help implement the computational experiments and to draft and structure parts of the manuscript. After using these tools, the authors reviewed and edited the code and the content as needed and take full responsibility for the content of the published article.
+
+\appendix
+\input{sections/appendix}
+
+\bibliographystyle{cas-model2-names}
+\bibliography{manuscript}
+
+\end{document}

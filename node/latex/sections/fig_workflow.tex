@@ -1,0 +1,44 @@
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\footnotesize, >=Stealth,
+  box/.style={draw=black!55, rounded corners=2pt, align=center, inner sep=3pt, minimum height=10mm, fill=white},
+  datab/.style={box, fill=black!5},
+  learnb/.style={box, fill=blue!8},
+  mechb/.style={box, fill=orange!10},
+  discb/.style={box, fill=teal!10},
+  arr/.style={->, draw=black!65, line width=0.6pt},
+  lab/.style={font=\scriptsize, text=black!65}]
+
+% row 1: data and learning
+\node[datab,  text width=28mm] (runs)  at (1.6, 0)   {Runs $r=1,\dots,R$\\ samples $y_{r,i,j}$\\ feed $F_r(t)$, volume $V_r(t)$};
+\node[learnb, text width=50mm] (node)  at (7.4, 0)   {\textbf{1\;Hybrid neural ODE}\\ known mass balances, Eq.~\eqref{eq:massbalance}\\ $q_\ell=\mathrm{softplus}(g_{\boldsymbol\phi,\ell})\,S_\ell/(S_\ell+K_\ell)$, all runs jointly};
+\node[learnb, text width=34mm] (rates) at (13.3, 0)  {learned states $\hat{\mathbf{x}}(t)$\\ and rates $\hat{\mathbf{q}}(t)$};
+
+% row 2: candidates
+\node[datab,  text width=28mm] (lib)   at (1.6, -2.3)  {Library $\mathcal{M}$\\ $m_1,\dots,m_K$\\ $+$ accepted laws};
+\node[mechb,  text width=50mm] (match) at (7.4, -2.3)  {\textbf{2a\;Rate matching}\\ fit each $q_m(\hat{\mathbf{x}};\boldsymbol\theta)$ to $\hat{\mathbf{q}}$ $\Rightarrow$ $\boldsymbol\theta^{(0)}_m$};
+\node[discb,  text width=40mm] (sr)    at (13.3, -2.3) {\textbf{2b\;Constrained symbolic regression}\\ $qS=\sum_{\mathcal{A}} a_k\varphi_k - q\sum_{\mathcal{B}} b_k\psi_k$\\ $b_k\ge0$,\; $q\ge0$,\; $q(S{\to}0)\to0$};
+
+% row 3: refinement and ranking
+\node[box,    text width=50mm] (ref)   at (7.4, -4.6)  {\textbf{3\;Refinement against the data}\\ bounded least squares from two starts,\\ initial states within $\pm3\sigma$};
+\node[box,    text width=40mm] (sel)   at (13.3, -4.6) {\textbf{4\;BIC ranking and adequacy}\\ weights $w_m$, shortlist $w_m>0.1$\\ adequate: $\chi^2_{\min}\le n+3\sqrt{2n}$};
+\node[datab,  text width=26mm] (res)   at (18.1, -4.6) {selected mechanism,\\ parameters,\\ shortlist};
+
+% row 4: escalation and acceptance
+\node[discb,  text width=40mm] (esc)   at (13.3, -6.9) {\textbf{5\;Escalation}\\ screen every admissible law against\\ the data; refine and rank the best 5};
+\node[discb,  text width=50mm] (acc)   at (7.4, -6.9)  {\textbf{6\;Acceptance}\\ $\Delta\mathrm{BIC}<-10$ vs.\ the library and adequate\\ $\Rightarrow$ add the law to the library};
+
+% arrows
+\draw[arr] (runs) -- (node);
+\draw[arr] (node) -- (rates);
+\draw[arr] (rates) -- (sr);
+\draw[arr] (rates.south west) ++(3mm,0) |- ($(match.north)+(0,4mm)$) -- (match.north);
+\draw[arr] (lib) -- (match);
+\draw[arr] (match) -- (ref);
+\draw[arr] (sr.south west) ++(4mm,0) -- node[pos=0.45, above, sloped, lab] {proposed laws} ($(ref.north east)+(-4mm,0)$);
+\draw[arr] (ref) -- (sel);
+\draw[arr] (sel) -- node[above, lab] {adequate} (res);
+\draw[arr] (sel) -- node[right, lab] {not adequate} (esc);
+\draw[arr] (esc) -- (acc);
+\draw[arr] (acc.west) -| node[pos=0.75, left, lab] {closing the loop} (lib.south);
+\end{tikzpicture}}

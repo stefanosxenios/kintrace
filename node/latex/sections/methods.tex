@@ -1,0 +1,119 @@
+\section{Methods}\label{sec:methods}
+
+\begin{figure*}
+\centering
+\input{sections/fig_workflow}
+\caption{Workflow. A hybrid neural ODE keeps the mass balances and learns the specific rates from one or several runs (step 1). The learned rates initialise every library mechanism (step 2a) and feed a physically constrained symbolic regression that proposes new rate laws (step 2b). All candidates are refined against the measurements and ranked by BIC (steps 3--4). If the best candidate does not fit within the measurement noise, every admissible law is screened against the data (step 5); a law that beats the library and fits within the noise is accepted and added to the library for later experiments (step 6).}
+\label{fig:workflow}
+\end{figure*}
+
+\subsection{Problem formulation}\label{sec:m:problem}
+An experiment consists of $R\ge 1$ fed-batch runs. In run $r$, offline samples are taken at times $t_{r,i}$ and give measurements $y_{r,i,j}$ of channels $j$ (biomass, substrates, products); not every channel is measured at every time, and $\Omega$ denotes the set of available measurements, $n=|\Omega|$. The feed rate $F_r(t)$, the feed composition $\mathbf{x}^{\mathrm{in}}_r$ and the culture volume $V_r(t)$ are recorded, so the dilution rate $D_r(t)=F_r(t)/V_r(t)$ is a known input. The concentrations $\mathbf{x}=(X,S_1,\dots,P,\dots)$ obey mass balances of the form
+\begin{equation}
+\frac{\dd \mathbf{x}}{\dd t} = \mathbf{N}(\boldsymbol{\eta})\,\mathbf{q}(\mathbf{x})\,X + D_r(t)\,\big(\mathbf{x}^{\mathrm{in}}_r - \mathbf{x}\big) - k_d X\,\mathbf{e}_X ,
+\label{eq:massbalance}
+\end{equation}
+in which the stoichiometric matrix $\mathbf{N}$ contains the yields $\boldsymbol{\eta}$, $\mathbf{q}(\mathbf{x})$ is the vector of specific rates (growth, conversion), $k_d\ge 0$ is a first-order death rate and $\mathbf{e}_X$ selects the biomass equation. The structure of Eq.~\eqref{eq:massbalance} is known; the specific rates are not. A mechanism $m$ is a parametric rate law $\mathbf{q}_m(\mathbf{x};\boldsymbol{\theta}_m)$, and a library $\mathcal{M}$ collects the candidate mechanisms. The task is to decide which candidate (if any) governs the data, to estimate its parameters, and, when no candidate is adequate, to propose one that is.
+
+\subsection{Step 1: hybrid neural ODE}\label{sec:m:node}
+The specific rates are represented by a single multilayer perceptron $\mathbf{g}_{\boldsymbol{\phi}}$ (two hidden layers of 16 $\tanh$ units) that receives the concentrations on which the rates may depend, scaled by their largest measured values. Each rate $q_\ell$ is limited by a substrate $S_\ell$:
+\begin{equation}
+q_\ell(\mathbf{x}) = \softplus\!\big(g_{\boldsymbol{\phi},\ell}(\tilde{\mathbf{x}})\big)\,\frac{S_\ell}{S_\ell + K_\ell},
+\label{eq:rate}
+\end{equation}
+with $\softplus(z)=\ln(1+e^{z})$.
+The two factors encode the only assumptions that every candidate mechanism shares. The softplus keeps the rate non-negative (cell death is described separately by $k_d$), and the substrate factor makes the rate vanish smoothly when $S_\ell\to 0$, whatever the network outputs. The second constraint matters in fed-batch operation, where the culture spends most of the run substrate-limited: the substrate then settles at a low level $S^*_\ell$ at which uptake equals supply, which exists and is stable only if $q_\ell(S_\ell=0)=0$ and $q_\ell$ increases with $S_\ell$. Without the factor the network can assign a positive rate at zero substrate and the model consumes substrate that is not there (Section~\ref{sec:c1:node}). The constant $K_\ell$ is a fraction $\kappa_\ell$ of the typical substrate range, $K_\ell=\kappa_\ell\,\mathrm{median}_r\max_t S_{\ell,r}$, chosen close to the resolution of the data and large enough to keep the ODE non-stiff for an explicit integrator; it plays no role in the mechanisms that are eventually selected, whose parameters are estimated separately (Section~\ref{sec:m:refine}). The yields and $k_d$ are trainable scalars, kept positive through a logarithmic parameterisation.
+
+The hybrid model is integrated with a fixed-step fourth-order Runge--Kutta scheme \citep{Chen2018}, all runs of an experiment at once as one batched state, and trained with Adam \citep{Kingma2015} on the range-scaled misfit
+\begin{equation}
+\mathcal{L}(\boldsymbol{\phi},\boldsymbol{\eta},k_d,\boldsymbol{\delta}) = \frac{1}{n}\sum_{(r,i,j)\in\Omega}\left(\frac{\hat{x}_{r,j}(t_{r,i}) - y_{r,i,j}}{s_{r,j}}\right)^2 ,
+\label{eq:loss}
+\end{equation}
+where $s_{r,j}$ is the range of channel $j$ in run $r$. The initial state of each run is $\hat{\mathbf{x}}_r(0)=\mathbf{x}^0_r + 0.05\,\mathbf{s}\odot\boldsymbol{\delta}_r$, a trainable correction $\boldsymbol{\delta}_r$ to a data-based estimate $\mathbf{x}^0_r$: the intercept of a straight line through the samples taken within the first hour, or the first sample if only one is available, floored at 2\,\% of the channel maximum. Two details make training reliable. The fitting horizon grows from the first 25\,\% of the samples to all of them over the first half of the iterations, which avoids the spurious lag phases and stalls that appear when a full fed-batch trajectory is fitted from a random network; and the best full-horizon state is kept. Table~\ref{tab:settings} lists all settings.
+
+\subsection{Step 2a: from learned rates to starting points}\label{sec:m:match}
+The trained model provides dense trajectories $\hat{\mathbf{x}}(t)$ and rates $\hat{\mathbf{q}}(t)$ along every run. For each candidate $m$, its rate law is fitted to the learned rates,
+\begin{equation}
+\boldsymbol{\theta}^{(0)}_m = \arg\min_{\boldsymbol{\theta}} \sum_{\ell}\sum_{t\in\mathcal{T}} \left(\frac{q_{m,\ell}(\hat{\mathbf{x}}(t);\boldsymbol{\theta}) - \hat{q}_\ell(t)}{\max_t \hat{q}_\ell}\right)^2 ,
+\label{eq:match}
+\end{equation}
+on a dense grid $\mathcal{T}$, with the yields and $k_d$ taken from the hybrid model; for the xylitol case the net growth rate $q_1-k_d$ is matched as well. This is an algebraic fit without ODE solves. It gives every candidate a starting point that reflects what the data say about the kinetics, rather than a generic point of its parameter box, at a cost that is negligible compared with the refinement.
+
+\subsection{Step 2b: physically constrained symbolic regression}\label{sec:m:sr}
+The library can only offer mechanisms that someone wrote down. To propose others, the learned rates are passed to a symbolic regression that searches over rate laws of the implicit form \citep{Mangan2016,Kaheman2020}
+\begin{equation}
+\begin{aligned}
+q\,S &= \sum_{k\in\mathcal{A}} a_k\,\varphi_k(\mathbf{x}) - q\sum_{k\in\mathcal{B}} b_k\,\psi_k(\mathbf{x}),\\
+\text{i.e.}\quad q &= \frac{\sum_{\mathcal{A}} a_k\varphi_k(\mathbf{x})}{S + \sum_{\mathcal{B}} b_k \psi_k(\mathbf{x})},
+\end{aligned}
+\label{eq:sr}
+\end{equation}
+where $S$ is the limiting substrate of the rate, $\{\varphi_k\}$ are numerator terms and $\{\psi_k\}$ denominator terms. For example, the Haldane law $\mu=\mu_{\max}S/(K_S+S+S^2/K_I)$ corresponds to $\mathcal{A}=\{S\}$ and $\mathcal{B}=\{1,S^2\}$. Exponential terms with a fitted constant, $S\,e^{-S/K}$ or $S\,e^{-P/K}$, extend the search to non-rational laws such as those of \citet{Teissier1942} and \citet{Aiba1968}. The dictionaries used in the case studies are listed in Sections~\ref{sec:case1} and \ref{sec:case2}.
+
+The dictionaries are small, so every subset of terms up to a maximum size is evaluated (best-subset regression); sequentially thresholded least squares \citep{Brunton2016} approximates this search when the dictionary is too large to enumerate. Each subset defines a law whose coefficients are fitted to the learned rate \emph{in rate space}, by bounded nonlinear least squares on $q(\hat{\mathbf{x}}(t)) - \hat{q}(t)$, rather than by linear least squares on the implicit form of Eq.~\eqref{eq:sr}, which weights every sample by the square of the denominator and lets the high-substrate end of a run dominate. A law is kept only if it is physically admissible:
+(i) it has at least one numerator term;
+(ii) the denominator coefficients are non-negative, $b_k\ge 0$, so that the denominator is a sum of positive contributions as in every saturation or inhibition law (unconstrained fits readily produce denominators that change sign, i.e.\ rates that diverge);
+(iii) every denominator term contributes along the trajectories;
+(iv) the rate is non-negative along the trajectories; and
+(v) the rate vanishes when the limiting substrate is exhausted, $q(S\to 0)\le 0.05\max_t\hat{q}$.
+For each number of terms, the best admissible laws by rate-space error are retained. Each retained law---and, when the model has several rates, each combination of retained laws---becomes a candidate mechanism, with and without a death term. Its coefficients are bounded to $[0.1, 10]$ times their regression values with their signs preserved, and it is refined against the measurements (Section~\ref{sec:m:refine}) and ranked by BIC together with the library mechanisms. The regression therefore proposes; the measurements decide.
+
+\subsection{Step 3: refinement against the measurements}\label{sec:m:refine}
+Each candidate is then calibrated against the measurements by bounded nonlinear least squares,
+\begin{equation}
+\min_{\boldsymbol{\theta},\,\mathbf{x}_0}\ \chi^2_m = \sum_{(r,i,j)\in\Omega}\left(\frac{x_{r,j}(t_{r,i};\boldsymbol{\theta},\mathbf{x}_{0,r}) - y_{r,i,j}}{\sigma_{r,j}}\right)^2 ,
+\label{eq:chi2}
+\end{equation}
+where the model is integrated with LSODA \citep{Petzold1983}. The kinetic parameters are bounded by $[0.1\,\boldsymbol{\ell}_m,\,5\,\mathbf{u}_m]$, generous multiples of physiological ranges $[\boldsymbol{\ell}_m,\mathbf{u}_m]$, and the initial states are estimated together with them within three noise standard deviations of $\mathbf{x}^0_r$: during exponential growth a small error in the initial biomass cannot be absorbed by any kinetic parameter. Because the parameters span several orders of magnitude, the optimisation is carried out in normalised coordinates $z = 1+(\theta-\theta^{\mathrm{lb}})/(\theta^{\mathrm{ub}}-\theta^{\mathrm{lb}})\in[1,2]$ with a trust-region reflective solver \citep{Branch1999} and forward-difference Jacobians with a relative step of $10^{-3}$. Every candidate is refined from two starting points, $\boldsymbol{\theta}^{(0)}_m$ and the centre of $[\boldsymbol{\ell}_m,\mathbf{u}_m]$, and the better fit is kept. Nested mechanisms provide a further check. A library mechanism that fits worse than a mechanism nested in it is usually trapped in a local minimum; it is then refined once more from the fit of the nested mechanism, with its additional terms made as weak as the bounds allow (inhibition constants at their upper bounds, death rate at its lower bound), for at most three rounds. In case study~2, whose mechanisms have up to nine parameters and four initial states per run, this restart was needed for the most complex mechanisms.
+
+\subsection{Step 4: selection and adequacy}\label{sec:m:select}
+With known measurement standard deviations $\sigma_{r,j}$ (the synthetic studies, where $\sigma_{r,j}$ is the noise level times the observed range of the channel) the candidates are ranked by Eq.~\eqref{eq:bic_bg}, where $k_m$ counts the kinetic parameters, yields and death rate; the initial states are common to all candidates and do not affect the ranking. The BIC weights $w_m$ are reported, and candidates with $w_m>0.1$ form a shortlist. The best candidate is \emph{adequate} if its residuals are compatible with the noise, which for a correct model gives $\chi^2\approx n-p$ with a standard deviation of about $\sqrt{2n}$; we use
+\begin{equation}
+\chi^2_{\min} \le n + 3\sqrt{2n}
+\label{eq:adequacy}
+\end{equation}
+as the adequacy test.
+
+For real data the error standard deviations are unknown. We assume one standard deviation $\sigma_j$ per measured species, shared across runs, and profile it out of the Gaussian likelihood \citep{BoxDraper1965,Bard1974}, which gives
+\begin{equation}
+\BIC_m = \sum_j n_j \ln\frac{\mathrm{RSS}_{m,j}}{n_j} + k_m \ln n ,
+\label{eq:bic_profile}
+\end{equation}
+where $\mathrm{RSS}_{m,j}$ is the residual sum of squares of species $j$ and $n_j$ its number of measurements. The minimiser of Eq.~\eqref{eq:bic_profile} is obtained by iteratively reweighted least squares: Eq.~\eqref{eq:chi2} is solved with $\sigma_j$ fixed, $\sigma_j^2$ is re-estimated as $\mathrm{RSS}_{j}/n_j$, and the procedure is repeated three times. The bounds on the initial states are set once, with $\sigma_j$ equal to 5\,\% of the range of species $j$, so that a poor fit cannot widen them by inflating its own error estimate. Weighting by the estimated $\sigma_j$ also prevents the species with the largest concentrations (here, xylitol) from dominating the fit. The adequacy test is not available in this case.
+
+\subsection{Steps 5--6: escalation and closing the loop}\label{sec:m:loop}
+Ranking candidates by their match to the learned rates is a shortcut that works when the hybrid model is accurate. When the best library mechanism fails the adequacy test of Eq.~\eqref{eq:adequacy}, the shortcut is replaced by a screening of every admissible law (up to the maximum size) against the measurements: each law receives a short refinement of its coefficients and of the initial states (at most 50 objective evaluations), the laws are ranked by BIC, and the five best are refined fully, with and without a death term, and added to the ranking.
+
+A proposed law is \emph{accepted} into the library when two conditions hold: it beats every library mechanism by $\Delta\BIC<-10$, which is very strong evidence on the usual scale \citep{Burnham2002}, and it passes the adequacy test. The second condition prevents a law that is merely better than the library, but still inconsistent with the data, from being carried into later analyses. An accepted law is stored with its terms and refined coefficients; in later experiments it is treated as any other mechanism, with a parameter box centred on the stored values and starting points from the stored values and from its terms refitted to the new learned rates.
+
+\subsection{Implementation and evaluation protocol}\label{sec:m:impl}
+The workflow is implemented in Python with PyTorch \citep{Paszke2019} and torchdiffeq \citep{Chen2018} for the hybrid model, SciPy \citep{Virtanen2020} for integration and least squares, and SymPy \citep{Meurer2017} to simplify the discovered laws. Each synthetic analysis runs on a single CPU core; for the real runs, the candidates of an analysis are refined in parallel. For the synthetic studies, measurements are generated by integrating the true model and adding Gaussian noise with a standard deviation equal to a fixed fraction of each channel's range, clipped at zero; every experiment is repeated for \ConeSeeds{} independent noise realisations, and the results are reported as frequencies and medians over the realisations.
+
+\begin{table}[width=\linewidth,cols=3,pos=t]
+\caption{Settings of the workflow. Where two values are given, the first applies to case study~1 and the second to case study~2.}\label{tab:settings}
+\begin{tabular*}{\tblwidth}{@{}LL@{}}
+\toprule
+Item & Setting \\
+\midrule
+Rate network & MLP, 2 hidden layers $\times$ 16, $\tanh$ \\
+Rate constraint & softplus $\times\, S/(S+K)$, Eq.~\eqref{eq:rate} \\
+$\kappa$ in $K_\ell$ & 0.1; 0.25 (glucose), 0.1 (xylose) \\
+Hybrid integrator & RK4, step 0.25\,h; 1\,h \\
+Optimiser & Adam, learning rate $10^{-2}$ \\
+Iterations & 300; 200 \\
+Horizon curriculum & 25\,\% $\to$ 100\,\% of samples \\
+Refinement solver & LSODA, rtol $10^{-6}$, atol $10^{-8}$ \\
+Parameter bounds & $[0.1\,\boldsymbol{\ell},\,5\,\mathbf{u}]$ \\
+Initial states & $\mathbf{x}^0 \pm 3\sigma$ (unknown $\sigma$: 5\,\% of range) \\
+Starts & rate matching; range centre; \\
+ & nested fit (case study 2) \\
+Shortlist & $w_m > 0.1$ \\
+Adequacy & $\chi^2_{\min}\le n+3\sqrt{2n}$ \\
+SR terms (max.) & 4; 3 ($\mu_1$), 6 ($\mu_2$) \\
+SR laws per size & 2; 1 \\
+Escalation & all laws, $\le 50$ evaluations each; \\
+ & best 5 refined fully \\
+Acceptance & $\Delta\BIC<-10$ and adequate \\
+\bottomrule
+\end{tabular*}
+\end{table}

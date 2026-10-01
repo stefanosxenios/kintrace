@@ -1,0 +1,10 @@
+\section{Conclusions}\label{sec:conclusions}
+A workflow for kinetic mechanism identification in fed-batch bioprocesses has been presented that learns the kinetics with a hybrid neural ODE before any mechanism is assumed, and then uses the learned rates to start, propose and check mechanistic rate laws. The main conclusions are as follows.
+\begin{itemize}
+\item A hybrid neural ODE whose rates are non-negative and vanish without substrate learns the signature of each kinetic law from sparse offline data of fed-batch runs, without numerical differentiation; the substrate constraint is required for substrate-limited operation.
+\item Learned rates are a reliable source of starting points for refining a library of candidate mechanisms, but not a substitute for the refinement: selection must be decided by fits to the measurements, and an adequacy test is needed to detect when no candidate explains the data.
+\item The information content of the experiment, rather than the fitting, limits identification. One run in which the states change monotonically and in concert left the mechanism ambiguous in a third of the cases; three runs with decorrelated biomass and substrate, fitted jointly, identified the generating mechanism in \ConeAccJoint\,\% of the cases.
+\item Symbolic regression restricted to physically admissible rational and exponential laws, and judged on the same criterion as the library, produced no false discoveries, recovered non-rational library laws, and discovered a mechanism missing from the library whenever the data required it; adding the discovered law to the library made it available for later runs without disturbing the identification of the existing mechanisms.
+\input{sections/conclusions_real}
+\end{itemize}
+The workflow runs in minutes per analysis on a workstation and requires only the mass balances, a library of candidate mechanisms and a dictionary of admissible rate-law terms. Coupling it with the model-based design of discriminating experiments is the natural next step.
